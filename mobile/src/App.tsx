@@ -1,6 +1,6 @@
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Animated, Easing, Platform, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Animated, Easing, Linking, Platform, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 type ScreenKey = 'home' | 'directory' | 'tree' | 'funeralCases' | 'notifications' | 'profile';
 
@@ -131,11 +131,11 @@ const QUICK_ACTIONS: QuickAction[] = [
 ];
 
 const BOTTOM_NAV_ITEMS: BottomNavItem[] = [
-  { icon: '🏠', label: 'Home', screen: 'home' },
-  { icon: '📇', label: 'Directory', screen: 'directory' },
-  { icon: '🌳', label: 'Tree', screen: 'tree' },
-  { icon: '🕊️', label: 'Cases', screen: 'funeralCases' },
-  { icon: '👤', label: 'Profile', screen: 'profile' }
+  { icon: '', label: 'Home', screen: 'home' },
+  { icon: '', label: 'Directory', screen: 'directory' },
+  { icon: '', label: 'Tree', screen: 'tree' },
+  { icon: '', label: 'Cases', screen: 'funeralCases' },
+  { icon: '', label: 'Profile', screen: 'profile' }
 ];
 
 function LandingBackground() {
@@ -183,12 +183,14 @@ function MobileFamilyTree({
   familyData,
   isLoading,
   error,
+  authToken,
   onAddFromNode
 }: {
   memberName: string;
   familyData: FamilySnapshot | null;
   isLoading: boolean;
   error: string;
+  authToken: string;
   onAddFromNode: (member: FamilyMember, relation: 'spouse' | 'child' | 'parent' | 'sibling') => void;
 }) {
   const [selectedMember, setSelectedMember] = useState<(FamilyMember & { relationLabel: string }) | null>(null);
@@ -1492,6 +1494,7 @@ export default function App() {
             familyData={familyData}
             isLoading={isFamilyLoading}
             error={familyError}
+            authToken={authToken}
             onAddFromNode={(member, relation) => {
               setActiveScreen('profile');
               setFamilyRelationType(relation);
@@ -3333,6 +3336,107 @@ const styles = StyleSheet.create({
     color: '#153D2F',
     fontSize: 14,
     fontWeight: '800'
+  },
+  treeMemberInfoSection: {
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#ECF3EF',
+    gap: 8
+  },
+  treeMemberInfoSectionTitle: {
+    color: '#1B4A3A',
+    fontSize: 12,
+    fontWeight: '800'
+  },
+  treeMemberInfoActionButton: {
+    alignSelf: 'flex-start',
+    borderRadius: 999,
+    backgroundColor: '#1F6B52',
+    paddingHorizontal: 12,
+    paddingVertical: 8
+  },
+  treeMemberInfoActionButtonText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '800'
+  },
+  treeMemberInfoErrorText: {
+    color: '#A43D32',
+    fontSize: 11,
+    fontWeight: '700'
+  },
+  treeMemberInfoList: {
+    gap: 8
+  },
+  treeMemberInfoListItem: {
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#D7E5DE',
+    backgroundColor: '#F7FBF8',
+    paddingHorizontal: 10,
+    paddingVertical: 9
+  },
+  treeMemberInfoListItemStatic: {
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#D7E5DE',
+    backgroundColor: '#F7FBF8',
+    paddingHorizontal: 10,
+    paddingVertical: 9
+  },
+  treeMemberInfoListItemTitle: {
+    color: '#163C30',
+    fontSize: 12,
+    fontWeight: '700'
+  },
+  treeMemberInfoListItemMeta: {
+    marginTop: 2,
+    color: '#5E766D',
+    fontSize: 10,
+    fontWeight: '700',
+    textTransform: 'uppercase'
+  },
+  treeMemberInfoInput: {
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#D3E2DB',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    color: '#173D30',
+    fontSize: 12
+  },
+  treeMemberInfoTypeRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8
+  },
+  treeMemberInfoTypePill: {
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#C9D9D1',
+    backgroundColor: '#F3F8F5',
+    paddingHorizontal: 10,
+    paddingVertical: 6
+  },
+  treeMemberInfoTypePillActive: {
+    borderColor: '#1F6B52',
+    backgroundColor: '#DFF1E8'
+  },
+  treeMemberInfoTypePillText: {
+    color: '#527166',
+    fontSize: 10,
+    fontWeight: '800'
+  },
+  treeMemberInfoTypePillTextActive: {
+    color: '#184635'
+  },
+  treeMemberInfoSmallText: {
+    color: '#5E766D',
+    fontSize: 11,
+    lineHeight: 16,
+    fontWeight: '600'
   },
   treeMemberInfoMeta: {
     marginTop: 2,
