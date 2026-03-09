@@ -1,0 +1,220 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  SUPER_ADMIN
+  TREASURER
+  MEMBER
+}
+
+enum MemberStatus {
+  ACTIVE
+  DECEASED
+}
+
+enum PaymentStatus {
+  PAID
+  PENDING
+  PARTIAL
+}
+
+enum NotificationChannel {
+  EMAIL
+  SMS
+  WHATSAPP
+  IN_APP
+}
+
+enum NotificationStatus {
+  QUEUED
+  SENT
+  FAILED
+}
+
+enum MemoryType {
+  PHOTO
+  AUDIO
+  VIDEO
+  DOCUMENT
+}
+
+enum RelationshipType {
+  PARENT
+  SPOUSE
+  CHILD
+}
+
+model User {
+  id             String   @id @default(cuid())
+  phoneNumber    String   @unique
+  fullName       String
+  role           Role     @default(MEMBER)
+  memberId       String?  @unique
+  lastOtpCode    String?
+  lastOtpExpires DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  member Member? @relation(fields: [memberId], references: [id], onDelete: SetNull)
+}
+
+model Member {
+  id           String       @id @default(cuid())
+  memberCode   String       @unique
+  fullName     String
+  photoUrl     String?
+  phoneNumber  String?      @unique
+  gender       String
+  birthYear    Int?
+  location     String?
+  notes        String?
+  clanName     String?
+  totem        String?
+  tribe        String?
+  originCountry String?
+  fatherId     String?
+  motherId     String?
+  spouseId     String?
+  status       MemberStatus @default(ACTIVE)
+  deathDate    DateTime?
+  dateJoined   DateTime     @default(now())
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  father             Member?              @relation("FatherRelation", fields: [fatherId], references: [id], onDelete: SetNull)
+  mother             Member?              @relation("MotherRelation", fields: [motherId], references: [id], onDelete: SetNull)
+  spouse             Member?              @relation("SpouseRelation", fields: [spouseId], references: [id], onDelete: SetNull)
+  childrenByFather   Member[]             @relation("FatherRelation")
+  childrenByMother   Member[]             @relation("MotherRelation")
+  spouseOf           Member[]             @relation("SpouseRelation")
+  user               User?
+  relationshipSource Relationship[]       @relation("RelationshipSource")
+  relationshipTarget Relationship[]       @relation("RelationshipTarget")
+  deceasedCases      FuneralCase[]        @relation("DeceasedMemberCases")
+  contributions      Contribution[]
+  payments           Payment[]
+  memorialMessages   MemorialMessage[]
+  memories           FamilyMemory[]
+}
+
+model FamilyMemory {
+  id          String     @id @default(cuid())
+  memberId    String?
+  title       String
+  description String?
+  fileUrl     String
+  type        MemoryType
+  createdByUserId String
+  createdAt   DateTime   @default(now())
+
+  member Member? @relation(fields: [memberId], references: [id], onDelete: SetNull)
+}
+
+model Relationship {
+  id           String           @id @default(cuid())
+  sourceId     String
+  targetId     String
+  type         RelationshipType
+  createdAt    DateTime         @default(now())
+
+  source Member @relation("RelationshipSource", fields: [sourceId], references: [id], onDelete: Cascade)
+  target Member @relation("RelationshipTarget", fields: [targetId], references: [id], onDelete: Cascade)
+
+  @@unique([sourceId, targetId, type])
+}
+
+model FuneralCase {
+  id                        String         @id @default(cuid())
+  deceasedMemberId          String
+  photoUrl                  String?
+  dateOfDeath               DateTime
+  funeralDate               DateTime
+  funeralLocation           String
+  familyMessage             String?
+  contributionPerMember     Decimal        @db.Decimal(10, 2)
+  totalExpectedContribution Decimal        @db.Decimal(12, 2)
+  isActive                  Boolean        @default(true)
+  createdByUserId           String
+  createdAt                 DateTime       @default(now())
+  updatedAt                 DateTime       @updatedAt
+
+  deceasedMember Member         @relation("DeceasedMemberCases", fields: [deceasedMemberId], references: [id], onDelete: Cascade)
+  contributions  Contribution[]
+  payments       Payment[]
+  expenses       Expense[]
+  notifications  Notification[]
+}
+
+model Contribution {
+  id           String        @id @default(cuid())
+  funeralCaseId String
+  memberId     String
+  amount       Decimal       @db.Decimal(10, 2)
+  status       PaymentStatus @default(PENDING)
+  dueDate      DateTime?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  funeralCase FuneralCase @relation(fields: [funeralCaseId], references: [id], onDelete: Cascade)
+  member      Member      @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@unique([funeralCaseId, memberId])
+}
+
+model Payment {
+  id            String   @id @default(cuid())
+  funeralCaseId String
+  memberId      String
+  amount        Decimal  @db.Decimal(10, 2)
+  paymentDate   DateTime
+  paymentMethod String
+  notes         String?
+  createdByUserId String
+  createdAt     DateTime @default(now())
+
+  funeralCase FuneralCase @relation(fields: [funeralCaseId], references: [id], onDelete: Cascade)
+  member      Member      @relation(fields: [memberId], references: [id], onDelete: Cascade)
+}
+
+model Expense {
+  id            String   @id @default(cuid())
+  funeralCaseId String
+  category      String
+  amount        Decimal  @db.Decimal(10, 2)
+  expenseDate   DateTime
+  description   String?
+  recordedByUserId String
+  createdAt     DateTime @default(now())
+
+  funeralCase FuneralCase @relation(fields: [funeralCaseId], references: [id], onDelete: Cascade)
+}
+
+model Notification {
+  id            String             @id @default(cuid())
+  funeralCaseId String?
+  title         String
+  message       String
+  channel       NotificationChannel
+  status        NotificationStatus @default(QUEUED)
+  recipient     String
+  sentAt        DateTime?
+  createdAt     DateTime           @default(now())
+
+  funeralCase FuneralCase? @relation(fields: [funeralCaseId], references: [id], onDelete: SetNull)
+}
+
+model MemorialMessage {
+  id          String   @id @default(cuid())
+  memberId    String
+  authorName  String
+  message     String
+  createdAt   DateTime @default(now())
+
+  member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+}

@@ -1,0 +1,14 @@
+{
+  "expo": {
+    "name": "Ubuntu Roots",
+    "slug": "ubuntu-roots-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "newArchEnabled": true,
+    "userInterfaceStyle": "light",
+    "splash": {
+      "backgroundColor": "#1F5F46"
+    },
+    "assetBundlePatterns": ["**/*"]
+  }
+}

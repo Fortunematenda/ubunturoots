@@ -1,0 +1,52 @@
+@import url('https://fonts.googleapis.com/css2?family=Merriweather:wght@400;700&family=Nunito+Sans:wght@400;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: #f6f7f3;
+  --surface: #ffffff;
+  --text: #1b1f1d;
+  --muted: #6d746f;
+  --green: #1f5f46;
+  --gold: #c7a248;
+  --gray: #e7e8e5;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background:
+    radial-gradient(circle at 10% 0%, #fef9ea 0%, transparent 33%),
+    radial-gradient(circle at 90% 10%, #dceadf 0%, transparent 28%),
+    var(--bg);
+  color: var(--text);
+  font-family: 'Nunito Sans', sans-serif;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  font-family: 'Merriweather', serif;
+}
+
+.card {
+  @apply rounded-2xl bg-white shadow-sm border border-ubuntu-gray;
+}
+
+.btn-primary {
+  @apply inline-flex items-center justify-center rounded-xl bg-ubuntu-green px-5 py-3 text-white font-semibold transition hover:brightness-110;
+}
+
+.btn-secondary {
+  @apply inline-flex items-center justify-center rounded-xl bg-ubuntu-gold px-5 py-3 text-black font-semibold transition hover:brightness-95;
+}
+
+.input {
+  @apply w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-base focus:border-ubuntu-green focus:outline-none;
+}
