@@ -22,6 +22,7 @@ type ApiMember = {
   motherId: string | null;
   spouseId: string | null;
   birthYear: number | null;
+  deathDate?: string | null;
   status: 'ACTIVE' | 'DECEASED';
 };
 

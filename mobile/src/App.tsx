@@ -1,6 +1,7 @@
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Animated, Easing, Linking, Platform, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { FamilyTreeEngine, type FamilyTreeNode } from './components/tree/FamilyTreeEngine';
 
 type ScreenKey = 'home' | 'directory' | 'tree' | 'funeralCases' | 'notifications' | 'profile';
 
@@ -79,6 +80,7 @@ type FamilyMember = {
   fullName: string;
   phoneNumber: string | null;
   birthYear: number | null;
+  deathDate?: string | null;
   location: string | null;
   gender?: string | null;
   photoUrl?: string | null;
@@ -103,6 +105,8 @@ type FamilyMemory = {
 
 type FamilySnapshot = {
   parents: FamilyMember[];
+  ownParents?: FamilyMember[];
+  spouseParents?: FamilyMember[];
   spouse: FamilyMember | null;
   children: FamilyMember[];
   siblings: FamilyMember[];
@@ -114,6 +118,37 @@ type FamilyApiResponse = {
   family?: FamilySnapshot;
   suggestions?: FamilyMember[];
 };
+
+function mapFamilyMemberToTreeNode(member: FamilyMember): FamilyTreeNode {
+  return {
+    id: String(member.id),
+    name: member.fullName
+  };
+}
+
+function buildFamilyTreeEngineData(memberName: string, family: FamilySnapshot | null): FamilyTreeNode {
+  const ownParents = family?.ownParents ?? family?.parents ?? [];
+  const spouseParents = family?.spouseParents ?? [];
+  const spouse = family?.spouse;
+  const children = family?.children ?? [];
+
+  const rootNode: FamilyTreeNode = {
+    id: 'you',
+    name: memberName,
+    parents: ownParents.map(mapFamilyMemberToTreeNode),
+    children: children.map(mapFamilyMemberToTreeNode)
+  };
+
+  if (spouse) {
+    rootNode.spouse = {
+      id: String(spouse.id),
+      name: spouse.fullName,
+      parents: spouseParents.map(mapFamilyMemberToTreeNode)
+    };
+  }
+
+  return rootNode;
+}
 
 const FAMILY_RELATION_OPTIONS: Array<{ value: 'spouse' | 'child' | 'parent' | 'sibling'; label: string }> = [
   { value: 'spouse', label: 'Add Spouse' },
@@ -178,49 +213,24 @@ function LandingBackground() {
   );
 }
 
-function MobileFamilyTree({
+  function MobileFamilyTree({
   memberName,
   familyData,
   isLoading,
   error,
-  authToken,
   onAddFromNode
 }: {
   memberName: string;
   familyData: FamilySnapshot | null;
   isLoading: boolean;
   error: string;
-  authToken: string;
   onAddFromNode: (member: FamilyMember, relation: 'spouse' | 'child' | 'parent' | 'sibling') => void;
 }) {
-  const [selectedMember, setSelectedMember] = useState<(FamilyMember & { relationLabel: string }) | null>(null);
-  const [quickAddTarget, setQuickAddTarget] = useState<(FamilyMember & { relationLabel: string }) | null>(null);
-  const treeScrollRef = useRef<ScrollView | null>(null);
-  const [showAllParents, setShowAllParents] = useState(false);
-  const [showAllChildren, setShowAllChildren] = useState(false);
-  const [showAllSiblings, setShowAllSiblings] = useState(false);
-
-  const allParents = familyData?.parents ?? [];
-  const allChildren = familyData?.children ?? [];
-  const allSiblings = familyData?.siblings ?? [];
-
-  const parents = (showAllParents ? allParents : allParents.slice(0, 4)) ?? [];
-  const children = (showAllChildren ? allChildren : allChildren.slice(0, 6)) ?? [];
-  const siblings = (showAllSiblings ? allSiblings : allSiblings.slice(0, 4)) ?? [];
+  const ownParents = familyData?.ownParents ?? familyData?.parents ?? [];
+  const spouseParents = familyData?.spouseParents ?? [];
+  const children = familyData?.children ?? [];
+  const siblings = familyData?.siblings ?? [];
   const spouse = familyData?.spouse;
-
-  const [memberMemories, setMemberMemories] = useState<FamilyMemory[]>([]);
-  const [memoriesError, setMemoriesError] = useState('');
-  const [isMemoriesLoading, setIsMemoriesLoading] = useState(false);
-  const [siblingSuggestions, setSiblingSuggestions] = useState<FamilyMember[]>([]);
-  const [suggestionsError, setSuggestionsError] = useState('');
-  const [isSuggestionsLoading, setIsSuggestionsLoading] = useState(false);
-
-  const [newMemoryTitle, setNewMemoryTitle] = useState('');
-  const [newMemoryUrl, setNewMemoryUrl] = useState('');
-  const [newMemoryType, setNewMemoryType] = useState<FamilyMemoryType>('AUDIO');
-  const [newMemoryDescription, setNewMemoryDescription] = useState('');
-  const [newMemoryStatus, setNewMemoryStatus] = useState('');
 
   const primaryMember: FamilyMember & { relationLabel: string } = {
     id: -1,
@@ -228,28 +238,13 @@ function MobileFamilyTree({
     phoneNumber: null,
     birthYear: null,
     location: null,
-    gender: null,
     relationLabel: 'You'
   };
-
-  const isEmpty = !parents.length && !children.length && !siblings.length && !spouse;
-  const fatherParents = parents.filter((member) => (member.gender || '').toUpperCase() === 'MALE');
-  const motherParents = parents.filter((member) => (member.gender || '').toUpperCase() === 'FEMALE');
-  const otherParents = parents.filter((member) => {
-    const normalizedGender = (member.gender || '').toUpperCase();
-    return normalizedGender !== 'MALE' && normalizedGender !== 'FEMALE';
-  });
-  const quickAddOptions = quickAddTarget
-    ? quickAddTarget.id === primaryMember.id
-      ? FAMILY_RELATION_OPTIONS
-      : FAMILY_RELATION_OPTIONS.filter((option) => option.value !== 'parent')
-    : FAMILY_RELATION_OPTIONS;
 
   if (isLoading) {
     return (
       <View style={styles.treePanel}>
-        <Text style={styles.treePanelTitle}>Tree Preview</Text>
-        <Text style={styles.treePanelHint}>Building your family relationships...</Text>
+        <Text>Loading family tree...</Text>
       </View>
     );
   }
@@ -257,441 +252,144 @@ function MobileFamilyTree({
   if (error) {
     return (
       <View style={styles.treePanel}>
-        <Text style={styles.treePanelTitle}>Tree Preview</Text>
-        <Text style={styles.treePanelError}>{error}</Text>
+        <Text>{error}</Text>
       </View>
     );
   }
 
   return (
-    <Pressable
-      style={styles.treePanel}
-      onPress={() => {
-        setSelectedMember(null);
-        setQuickAddTarget(null);
-        setMemberMemories([]);
-        setSiblingSuggestions([]);
-        setMemoriesError('');
-        setSuggestionsError('');
-      }}
-    >
-      <View style={styles.treePanelHeaderRow}>
-        <Text style={styles.treePanelTitle}>Top-Down Family Tree</Text>
-        <Pressable
-          style={styles.treeRecenterButton}
-          onPress={() => {
-            treeScrollRef.current?.scrollTo({ x: 0, y: 0, animated: true });
-          }}
-        >
-          <Text style={styles.treeRecenterButtonText}>Re-center</Text>
-        </Pressable>
-      </View>
-      <Text style={styles.treePanelHint}>Parents at top, you in the middle, children below.</Text>
-      <Text style={styles.treeSelectionHint}>Tap any card to open member info.</Text>
-
-      <ScrollView
-        ref={(ref) => {
-          treeScrollRef.current = ref;
-        }}
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.treeCanvasScrollContent}
-      >
+    <View style={styles.treePanel}>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false}>
         <View style={styles.treeCanvas}>
-          {parents.length ? (
-            <View style={styles.treeLevel}>
-              <Text style={styles.treeLevelLabel}>Parents</Text>
-              <View style={styles.treeParentTopRow}>
-                <View style={styles.treeParentColumn}>
-                  {fatherParents.length
-                    ? fatherParents.map((member) => {
-                        const parentMember = { ...member, relationLabel: 'Father' };
-                        return (
-                          <TreePersonCard
-                            key={`father-${member.id}`}
-                            member={parentMember}
-                            isSelected={selectedMember?.id === parentMember.id}
-                            onPress={() => setSelectedMember(parentMember)}
-                            onAddPress={() => setQuickAddTarget(parentMember)}
-                          />
-                        );
-                      })
-                    : null}
-                </View>
-                <View style={styles.treeParentColumn}>
-                  {motherParents.length
-                    ? motherParents.map((member) => {
-                        const parentMember = { ...member, relationLabel: 'Mother' };
-                        return (
-                          <TreePersonCard
-                            key={`mother-${member.id}`}
-                            member={parentMember}
-                            isSelected={selectedMember?.id === parentMember.id}
-                            onPress={() => setSelectedMember(parentMember)}
-                            onAddPress={() => setQuickAddTarget(parentMember)}
-                          />
-                        );
-                      })
-                    : null}
-                </View>
-              </View>
-              {otherParents.length ? (
-                <View style={styles.treeParentSecondaryRow}>
-                  {otherParents.map((member) => {
-                    const parentMember = { ...member, relationLabel: 'Parent' };
-                    return (
-                      <TreePersonCard
-                        key={`parent-${member.id}`}
-                        member={parentMember}
-                        isSelected={selectedMember?.id === parentMember.id}
-                        onPress={() => setSelectedMember(parentMember)}
-                        onAddPress={() => setQuickAddTarget(parentMember)}
-                      />
-                    );
-                  })}
-                </View>
-              ) : null}
-            </View>
-          ) : null}
 
-          {allParents.length > 4 ? (
-            <Pressable
-              style={styles.treeExpandButton}
-              onPress={() => {
-                setShowAllParents((value) => !value);
-              }}
-            >
-              <Text style={styles.treeExpandButtonText}>{showAllParents ? 'Show fewer parents' : `Show ${allParents.length - 4} more parents`}</Text>
-            </Pressable>
-          ) : null}
-
-          {parents.length ? <TreeConnector /> : null}
-
-          <TreeLevel
-            label="You"
-            members={[primaryMember, ...(spouse ? [{ ...spouse, relationLabel: 'Spouse' }] : [])]}
-            selectedMemberId={selectedMember?.id ?? null}
-            onSelectMember={setSelectedMember}
-            onAddMember={setQuickAddTarget}
+          <CoupleRow
+            ownParents={ownParents.map((p) => ({ ...p, relationLabel: 'Parent' }))}
+            primaryMember={primaryMember}
+            spouse={spouse ? { ...spouse, relationLabel: 'Spouse' } : null}
+            spouseParents={spouseParents.map((p) => ({ ...p, relationLabel: 'Parent' }))}
+            onAdd={onAddFromNode}
           />
 
-          {children.length ? <TreeConnector /> : null}
-          {children.length ? (
-            <TreeLevel
-              label="Children"
-              members={children.map((member) => ({ ...member, relationLabel: 'Child' }))}
-              selectedMemberId={selectedMember?.id ?? null}
-              onSelectMember={setSelectedMember}
-              onAddMember={setQuickAddTarget}
+          {children.length > 0 ? <TreeConnector /> : null}
+
+          {children.length > 0 ? <TreeRow label="Children" members={children.map((c) => ({ ...c, relationLabel: 'Child' }))} onAdd={onAddFromNode} /> : null}
+
+          {siblings.length > 0 && (
+            <TreeRow
+              label="Siblings"
+              members={siblings.map((s) => ({ ...s, relationLabel: 'Sibling' }))}
+              onAdd={onAddFromNode}
             />
-          ) : null}
-
-          {allChildren.length > 6 ? (
-            <Pressable
-              style={styles.treeExpandButton}
-              onPress={() => {
-                setShowAllChildren((value) => !value);
-              }}
-            >
-              <Text style={styles.treeExpandButtonText}>{showAllChildren ? 'Show fewer children' : `Show ${allChildren.length - 6} more children`}</Text>
-            </Pressable>
-          ) : null}
-
-          {siblings.length ? (
-            <View style={styles.treeSideSection}>
-              <Text style={styles.treeSideLabel}>Siblings</Text>
-              <View style={styles.treeRowWrap}>
-                {siblings.map((member) => {
-                  const siblingMember = { ...member, relationLabel: 'Sibling' };
-                  return (
-                    <TreePersonCard
-                      key={`sibling-${member.id}`}
-                      member={siblingMember}
-                      isSelected={selectedMember?.id === siblingMember.id}
-                      onPress={() => setSelectedMember(siblingMember)}
-                      onAddPress={() => setQuickAddTarget(siblingMember)}
-                    />
-                  );
-                })}
-              </View>
-            </View>
-          ) : null}
-
-          {allSiblings.length > 4 ? (
-            <Pressable
-              style={styles.treeExpandButton}
-              onPress={() => {
-                setShowAllSiblings((value) => !value);
-              }}
-            >
-              <Text style={styles.treeExpandButtonText}>{showAllSiblings ? 'Show fewer siblings' : `Show ${allSiblings.length - 4} more siblings`}</Text>
-            </Pressable>
-          ) : null}
-
-          {selectedMember ? (
-            <Pressable style={styles.treeMemberInfoCard} onPress={(event) => event.stopPropagation()}>
-              <Text style={styles.treeMemberInfoName}>{selectedMember.fullName}</Text>
-              <Text style={styles.treeMemberInfoMeta}>{selectedMember.relationLabel}</Text>
-              <View style={styles.treeMemberInfoRow}>
-                <Text style={styles.treeMemberInfoLabel}>Phone</Text>
-                <Text style={styles.treeMemberInfoValue}>{selectedMember.phoneNumber || 'Not set'}</Text>
-              </View>
-              <View style={styles.treeMemberInfoRow}>
-                <Text style={styles.treeMemberInfoLabel}>Birth Year</Text>
-                <Text style={styles.treeMemberInfoValue}>{selectedMember.birthYear ? String(selectedMember.birthYear) : 'Unknown'}</Text>
-              </View>
-              <View style={styles.treeMemberInfoRow}>
-                <Text style={styles.treeMemberInfoLabel}>Location</Text>
-                <Text style={styles.treeMemberInfoValue}>{selectedMember.location || 'Not set'}</Text>
-              </View>
-
-              {selectedMember.clanName || selectedMember.totem || selectedMember.tribe || selectedMember.originCountry ? (
-                <View style={styles.treeMemberInfoSection}>
-                  <Text style={styles.treeMemberInfoSectionTitle}>Heritage</Text>
-                  <Text style={styles.treeMemberInfoSmallText}>Clan: {selectedMember.clanName || '-'}</Text>
-                  <Text style={styles.treeMemberInfoSmallText}>Totem: {selectedMember.totem || '-'}</Text>
-                  <Text style={styles.treeMemberInfoSmallText}>Tribe: {selectedMember.tribe || '-'}</Text>
-                  <Text style={styles.treeMemberInfoSmallText}>Origin: {selectedMember.originCountry || '-'}</Text>
-                </View>
-              ) : null}
-
-              <View style={styles.treeMemberInfoSection}>
-                <Text style={styles.treeMemberInfoSectionTitle}>Memories</Text>
-                <Pressable
-                  style={styles.treeMemberInfoActionButton}
-                  onPress={async () => {
-                    if (!selectedMember) return;
-                    setIsMemoriesLoading(true);
-                    setMemoriesError('');
-                    try {
-                      const response = await fetch(`${RESOLVED_API_BASE_URL}/api/mobile/members/${selectedMember.id}/memories`, {
-                        method: 'GET',
-                        headers: {
-                          Authorization: `Bearer ${authToken}`
-                        }
-                      });
-                      const payload = (await response.json().catch(() => ({}))) as { success?: boolean; message?: string; memories?: FamilyMemory[] };
-                      if (!response.ok || !payload.success) {
-                        setMemoriesError(payload.message || 'Failed to load memories.');
-                        return;
-                      }
-                      setMemberMemories(payload.memories || []);
-                    } catch {
-                      setMemoriesError('Failed to load memories.');
-                    } finally {
-                      setIsMemoriesLoading(false);
-                    }
-                  }}
-                >
-                  <Text style={styles.treeMemberInfoActionButtonText}>{isMemoriesLoading ? 'Loading...' : 'Load memories'}</Text>
-                </Pressable>
-
-                {memoriesError ? <Text style={styles.treeMemberInfoErrorText}>{memoriesError}</Text> : null}
-                {memberMemories.length ? (
-                  <View style={styles.treeMemberInfoList}>
-                    {memberMemories.slice(0, 6).map((memory) => (
-                      <Pressable
-                        key={`memory-${memory.id}`}
-                        style={styles.treeMemberInfoListItem}
-                        onPress={() => {
-                          Linking.openURL(memory.fileUrl).catch(() => null);
-                        }}
-                      >
-                        <Text style={styles.treeMemberInfoListItemTitle}>{memory.title}</Text>
-                        <Text style={styles.treeMemberInfoListItemMeta}>{memory.type}</Text>
-                      </Pressable>
-                    ))}
-                  </View>
-                ) : null}
-
-                <TextInput
-                  style={styles.treeMemberInfoInput}
-                  placeholder="New memory title"
-                  value={newMemoryTitle}
-                  onChangeText={setNewMemoryTitle}
-                />
-                <TextInput
-                  style={styles.treeMemberInfoInput}
-                  placeholder="New memory URL (https://...)"
-                  value={newMemoryUrl}
-                  onChangeText={setNewMemoryUrl}
-                  autoCapitalize="none"
-                />
-                <TextInput
-                  style={styles.treeMemberInfoInput}
-                  placeholder="Description (optional)"
-                  value={newMemoryDescription}
-                  onChangeText={setNewMemoryDescription}
-                />
-                <View style={styles.treeMemberInfoTypeRow}>
-                  {(['PHOTO', 'AUDIO', 'VIDEO', 'DOCUMENT'] as FamilyMemoryType[]).map((t) => (
-                    <Pressable
-                      key={`memtype-${t}`}
-                      style={[styles.treeMemberInfoTypePill, newMemoryType === t && styles.treeMemberInfoTypePillActive]}
-                      onPress={() => setNewMemoryType(t)}
-                    >
-                      <Text style={[styles.treeMemberInfoTypePillText, newMemoryType === t && styles.treeMemberInfoTypePillTextActive]}>{t}</Text>
-                    </Pressable>
-                  ))}
-                </View>
-                <Pressable
-                  style={styles.treeMemberInfoActionButton}
-                  onPress={async () => {
-                    if (!selectedMember) return;
-                    if (!newMemoryTitle.trim() || !newMemoryUrl.trim()) {
-                      setNewMemoryStatus('Title and URL are required.');
-                      return;
-                    }
-                    setNewMemoryStatus('');
-                    try {
-                      const response = await fetch(`${RESOLVED_API_BASE_URL}/api/mobile/members/${selectedMember.id}/memories`, {
-                        method: 'POST',
-                        headers: {
-                          'Content-Type': 'application/json',
-                          Authorization: `Bearer ${authToken}`
-                        },
-                        body: JSON.stringify({
-                          title: newMemoryTitle.trim(),
-                          fileUrl: newMemoryUrl.trim(),
-                          description: newMemoryDescription.trim(),
-                          type: newMemoryType
-                        })
-                      });
-                      const payload = (await response.json().catch(() => ({}))) as { success?: boolean; message?: string };
-                      if (!response.ok || !payload.success) {
-                        setNewMemoryStatus(payload.message || 'Failed to save memory.');
-                        return;
-                      }
-                      setNewMemoryStatus('Saved.');
-                      setNewMemoryTitle('');
-                      setNewMemoryUrl('');
-                      setNewMemoryDescription('');
-                      setMemberMemories([]);
-                    } catch {
-                      setNewMemoryStatus('Failed to save memory.');
-                    }
-                  }}
-                >
-                  <Text style={styles.treeMemberInfoActionButtonText}>Save memory</Text>
-                </Pressable>
-                {newMemoryStatus ? <Text style={styles.treeMemberInfoSmallText}>{newMemoryStatus}</Text> : null}
-              </View>
-
-              <View style={styles.treeMemberInfoSection}>
-                <Text style={styles.treeMemberInfoSectionTitle}>Sibling Suggestions</Text>
-                <Pressable
-                  style={styles.treeMemberInfoActionButton}
-                  onPress={async () => {
-                    if (!selectedMember) return;
-                    setIsSuggestionsLoading(true);
-                    setSuggestionsError('');
-                    try {
-                      const response = await fetch(
-                        `${RESOLVED_API_BASE_URL}/api/mobile/members/${selectedMember.id}/suggestions?type=siblings`,
-                        {
-                          method: 'GET',
-                          headers: {
-                            Authorization: `Bearer ${authToken}`
-                          }
-                        }
-                      );
-                      const payload = (await response.json().catch(() => ({}))) as { success?: boolean; message?: string; suggestions?: FamilyMember[] };
-                      if (!response.ok || !payload.success) {
-                        setSuggestionsError(payload.message || 'Failed to load suggestions.');
-                        return;
-                      }
-                      setSiblingSuggestions(payload.suggestions || []);
-                    } catch {
-                      setSuggestionsError('Failed to load suggestions.');
-                    } finally {
-                      setIsSuggestionsLoading(false);
-                    }
-                  }}
-                >
-                  <Text style={styles.treeMemberInfoActionButtonText}>{isSuggestionsLoading ? 'Loading...' : 'Suggest siblings'}</Text>
-                </Pressable>
-                {suggestionsError ? <Text style={styles.treeMemberInfoErrorText}>{suggestionsError}</Text> : null}
-                {siblingSuggestions.length ? (
-                  <View style={styles.treeMemberInfoList}>
-                    {siblingSuggestions.slice(0, 6).map((sib) => (
-                      <View key={`sib-${sib.id}`} style={styles.treeMemberInfoListItemStatic}>
-                        <Text style={styles.treeMemberInfoListItemTitle}>{sib.fullName}</Text>
-                        <Text style={styles.treeMemberInfoListItemMeta}>{sib.birthYear || 'Unknown year'}</Text>
-                      </View>
-                    ))}
-                  </View>
-                ) : null}
-              </View>
-            </Pressable>
-          ) : null}
-
-          {isEmpty ? (
-            <View style={styles.treeEmptyState}>
-              <Text style={styles.treeEmptyTitle}>No linked relatives yet</Text>
-              <Text style={styles.treeEmptyBody}>Use Family Connections to add parent, spouse, child, or sibling and this tree will grow automatically.</Text>
-            </View>
-          ) : null}
+          )}
         </View>
       </ScrollView>
-
-      {quickAddTarget ? (
-        <Pressable style={styles.treeQuickAddSheetOverlay} onPress={() => setQuickAddTarget(null)}>
-          <Pressable style={styles.treeQuickAddSheet} onPress={(event) => event.stopPropagation()}>
-            <View style={styles.treeQuickAddSheetHeader}>
-              <Text style={styles.treeQuickAddTitle}>Add relative</Text>
-              <Pressable style={styles.treeQuickAddClose} onPress={() => setQuickAddTarget(null)}>
-                <Text style={styles.treeQuickAddCloseText}>Close</Text>
-              </Pressable>
-            </View>
-            <Text style={styles.treeQuickAddSubtitle} numberOfLines={2}>
-              For {quickAddTarget.fullName}
-            </Text>
-
-            <View style={styles.treeQuickAddGrid}>
-              {quickAddOptions.map((option) => (
-                <Pressable
-                  key={`quick-add-${quickAddTarget.id}-${option.value}`}
-                  style={styles.treeQuickAddButton}
-                  onPress={() => {
-                    onAddFromNode(quickAddTarget, option.value);
-                    setQuickAddTarget(null);
-                  }}
-                >
-                  <Text style={styles.treeQuickAddButtonText}>{option.label}</Text>
-                </Pressable>
-              ))}
-            </View>
-          </Pressable>
-        </Pressable>
-      ) : null}
-    </Pressable>
+    </View>
   );
 }
 
-function TreeLevel({
+function CoupleRow({
+  ownParents,
+  primaryMember,
+  spouse,
+  spouseParents,
+  onAdd
+}: {
+  ownParents: Array<FamilyMember & { relationLabel: string }>;
+  primaryMember: FamilyMember & { relationLabel: string };
+  spouse: (FamilyMember & { relationLabel: string }) | null;
+  spouseParents: Array<FamilyMember & { relationLabel: string }>;
+  onAdd: (member: FamilyMember, relation: 'spouse' | 'child' | 'parent' | 'sibling') => void;
+}) {
+  return (
+    <View style={styles.treeLevel}>
+      <Text style={styles.treeLevelLabel}>You</Text>
+      <View style={styles.treeTopParentGrid}>
+        <View style={styles.treeTopParentColumn}>
+          <View style={styles.treeTopParentRow}>
+            {ownParents.map((parent) => (
+              <TreePersonCard
+                key={parent.id}
+                member={parent}
+                showParentActions={false}
+                onAddFatherPress={() => onAdd(parent, 'parent')}
+                onAddMotherPress={() => onAdd(parent, 'parent')}
+                onAddPress={() => onAdd(parent, 'child')}
+              />
+            ))}
+          </View>
+          {ownParents.length > 0 ? (
+            <View style={styles.treeTopJoinWrap}>
+              <View style={styles.treeTopJoinHorizontal} />
+              <View style={styles.treeTopConnectorLine} />
+            </View>
+          ) : null}
+        </View>
+        <View style={styles.treeTopParentColumn}>
+          <View style={styles.treeTopParentRow}>
+            {spouseParents.map((parent) => (
+              <TreePersonCard
+                key={parent.id}
+                member={parent}
+                showParentActions={false}
+                onAddFatherPress={() => onAdd(parent, 'parent')}
+                onAddMotherPress={() => onAdd(parent, 'parent')}
+                onAddPress={() => onAdd(parent, 'child')}
+              />
+            ))}
+          </View>
+          {spouseParents.length > 0 ? (
+            <View style={styles.treeTopJoinWrap}>
+              <View style={styles.treeTopJoinHorizontal} />
+              <View style={styles.treeTopConnectorLine} />
+            </View>
+          ) : null}
+        </View>
+      </View>
+      <View style={styles.treeCoupleWrap}>
+        <TreePersonCard
+          member={primaryMember}
+          showParentActions
+          onAddFatherPress={() => onAdd(primaryMember, 'parent')}
+          onAddMotherPress={() => onAdd(primaryMember, 'parent')}
+          onAddPress={() => onAdd(primaryMember, spouse ? 'child' : 'spouse')}
+        />
+        {spouse ? <View style={styles.treeCoupleLine} /> : null}
+        {spouse ? (
+          <TreePersonCard
+            member={spouse}
+            showParentActions
+            onAddFatherPress={() => onAdd(spouse, 'parent')}
+            onAddMotherPress={() => onAdd(spouse, 'parent')}
+            onAddPress={() => onAdd(spouse, 'child')}
+          />
+        ) : null}
+      </View>
+    </View>
+  );
+}
+
+  function TreeRow({
   label,
   members,
-  selectedMemberId,
-  onSelectMember,
-  onAddMember
+  onAdd
 }: {
   label: string;
   members: Array<FamilyMember & { relationLabel: string }>;
-  selectedMemberId: number | null;
-  onSelectMember: (member: FamilyMember & { relationLabel: string }) => void;
-  onAddMember: (member: FamilyMember & { relationLabel: string }) => void;
+  onAdd: (member: FamilyMember, relation: 'spouse' | 'child' | 'parent' | 'sibling') => void;
 }) {
   return (
     <View style={styles.treeLevel}>
       <Text style={styles.treeLevelLabel}>{label}</Text>
+
       <View style={styles.treeRowWrap}>
         {members.map((member) => (
           <TreePersonCard
-            key={`${label}-${member.id}`}
+            key={member.id}
             member={member}
-            isSelected={selectedMemberId === member.id}
-            onPress={() => onSelectMember(member)}
-            onAddPress={() => onAddMember(member)}
+            showParentActions={false}
+            onAddFatherPress={() => onAdd(member, 'parent')}
+            onAddMotherPress={() => onAdd(member, 'parent')}
+            onAddPress={() => onAdd(member, 'child')}
           />
         ))}
       </View>
@@ -701,49 +399,55 @@ function TreeLevel({
 
 function TreePersonCard({
   member,
-  isSelected,
-  onPress,
+  showParentActions,
+  onAddFatherPress,
+  onAddMotherPress,
   onAddPress
 }: {
   member: FamilyMember & { relationLabel: string };
-  isSelected: boolean;
-  onPress: () => void;
+  showParentActions: boolean;
+  onAddFatherPress: () => void;
+  onAddMotherPress: () => void;
   onAddPress: () => void;
 }) {
-  const normalizedGender = (member.gender || '').toUpperCase();
-  const borderColor = normalizedGender === 'FEMALE' ? '#F7A3A1' : normalizedGender === 'MALE' ? '#69C4E8' : '#C9D4DF';
   const initials = member.fullName
     .split(' ')
-    .slice(0, 2)
-    .map((part) => part[0])
+    .map((p) => p[0])
     .join('')
+    .substring(0, 2)
     .toUpperCase();
+  const deathDateLabel = member.deathDate ? new Date(member.deathDate).toLocaleDateString() : null;
 
   return (
-    <Pressable
-      style={[styles.treeNodeCard, { borderColor }, isSelected && styles.treeNodeCardSelected]}
-      onPress={(event) => {
-        event.stopPropagation();
-        onPress();
-      }}
-    >
+    <View style={styles.treeNodeWrap}>
+      {showParentActions ? (
+        <View style={styles.treeParentActionRow}>
+          <Pressable style={styles.treeParentActionButton} onPress={onAddFatherPress}>
+            <Text style={styles.treeParentActionText}>Father</Text>
+          </Pressable>
+          <Pressable style={styles.treeParentActionButton} onPress={onAddMotherPress}>
+            <Text style={styles.treeParentActionText}>Mother</Text>
+          </Pressable>
+        </View>
+      ) : null}
+
+      <View style={styles.treeNodeCard}>
       <View style={styles.treeNodeAvatar}>
-        <Text style={styles.treeNodeAvatarText}>{initials || '•'}</Text>
+        <Text style={styles.treeNodeAvatarText}>{initials}</Text>
       </View>
-      <Text style={styles.treeNodeName} numberOfLines={2}>
+
+      <Text numberOfLines={2} style={styles.treeNodeName}>
         {member.fullName}
       </Text>
 
-      <Pressable
-        style={styles.treeNodeAddButton}
-        onPress={(event) => {
-          event.stopPropagation();
-          onAddPress();
-        }}
-      >
+      {member.birthYear ? <Text style={styles.treeNodeMeta}>DOB: {member.birthYear}</Text> : null}
+      {deathDateLabel ? <Text style={styles.treeNodeMeta}>DOD: {deathDateLabel}</Text> : null}
+
+      <Pressable style={styles.treeNodeAddButton} onPress={onAddPress}>
         <Text style={styles.treeNodeAddButtonText}>+</Text>
       </Pressable>
-    </Pressable>
+      </View>
+    </View>
   );
 }
 
@@ -751,7 +455,6 @@ function TreeConnector() {
   return (
     <View style={styles.treeConnectorWrap}>
       <View style={styles.treeConnectorLine} />
-      <View style={styles.treeConnectorDot} />
     </View>
   );
 }
@@ -807,6 +510,7 @@ export default function App() {
   const [familyPhotoUrl, setFamilyPhotoUrl] = useState('');
   const [familyNotes, setFamilyNotes] = useState('');
   const [familySuggestions, setFamilySuggestions] = useState<FamilyMember[]>([]);
+  const [familySourceMemberId, setFamilySourceMemberId] = useState<number | null>(null);
   const directorySearchRef = useRef<TextInput>(null);
   const landingIntroAnim = useRef(new Animated.Value(0)).current;
 
@@ -912,6 +616,7 @@ export default function App() {
       setFamilyError('');
       setFamilyInfo('');
       setFamilySuggestions([]);
+      setFamilySourceMemberId(null);
       setIsFamilyLoading(false);
       return;
     }
@@ -1158,6 +863,10 @@ export default function App() {
     const payload: Record<string, unknown> = {
       relationshipType: familyRelationType
     };
+
+    if (familySourceMemberId && familySourceMemberId > 0) {
+      payload.sourceUserId = familySourceMemberId;
+    }
 
     if (targetUserId) {
       payload.targetUserId = targetUserId;
@@ -1521,6 +1230,7 @@ export default function App() {
 
     if (activeScreen === 'tree') {
       const primaryName = authUser?.fullName || currentMemberName;
+      const treeData = buildFamilyTreeEngineData(primaryName, familyData);
 
       return (
         <ScreenShell
@@ -1546,21 +1256,33 @@ export default function App() {
             </View>
           </View>
 
-          <MobileFamilyTree
-            memberName={primaryName}
-            familyData={familyData}
-            isLoading={isFamilyLoading}
-            error={familyError}
-            authToken={authToken}
-            onAddFromNode={(member, relation) => {
-              setActiveScreen('profile');
-              setFamilyRelationType(relation);
-              setFamilyEntryMode('new');
-              setShowAdvancedFamilyFields(false);
-              setFamilyInfo(`Add ${relation} for ${member.fullName}. Complete the form below.`);
-              setFamilyError('');
-            }}
-          />
+          {isFamilyLoading ? <Text>Loading family tree...</Text> : null}
+          {familyError && !isFamilyLoading ? <Text>{familyError}</Text> : null}
+          {!isFamilyLoading && !familyError ? (
+            <FamilyTreeEngine
+              data={treeData}
+              onAddPress={(node) => {
+                const matchedMember = [
+                  ...(familyData?.ownParents ?? familyData?.parents ?? []),
+                  ...(familyData?.spouseParents ?? []),
+                  ...(familyData?.children ?? []),
+                  ...(familyData?.siblings ?? []),
+                  ...(familyData?.spouse ? [familyData.spouse] : [])
+                ].find((member) => String(member.id) === node.id);
+
+                const targetName = matchedMember?.fullName || node.name;
+                const targetId = matchedMember?.id ?? null;
+
+                setActiveScreen('profile');
+                setFamilyRelationType(node.id === 'you' || targetId ? 'parent' : 'child');
+                setFamilySourceMemberId(targetId);
+                setFamilyEntryMode('new');
+                setShowAdvancedFamilyFields(false);
+                setFamilyInfo(`Add family for ${targetName}. Complete the form below.`);
+                setFamilyError('');
+              }}
+            />
+          ) : null}
 
           {familyInfo ? <Text style={styles.profileInfoText}>{familyInfo}</Text> : null}
         </ScreenShell>
@@ -3100,170 +2822,143 @@ const styles = StyleSheet.create({
     fontWeight: '700'
   },
   treePanel: {
-    backgroundColor: '#F3F7F5',
+    backgroundColor: '#F4F7F5',
     borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#D6E3DC',
-    padding: 12
-  },
-  treePanelHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 10
-  },
-  treePanelTitle: {
-    color: '#1F5F46',
-    fontSize: 15,
-    fontWeight: '800'
-  },
-  treeRecenterButton: {
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: '#D4E3DB',
-    backgroundColor: '#FFFFFF',
-    paddingHorizontal: 10,
-    paddingVertical: 6
-  },
-  treeRecenterButtonText: {
-    color: '#1F5F46',
-    fontSize: 12,
-    fontWeight: '800'
-  },
-  treePanelHint: {
-    marginTop: 4,
-    marginBottom: 4,
-    color: '#557166',
-    fontSize: 12,
-    lineHeight: 16,
-    fontWeight: '600'
-  },
-  treeSelectionHint: {
-    marginBottom: 8,
-    color: '#46665A',
-    fontSize: 11,
-    fontWeight: '700'
-  },
-  treePanelError: {
-    marginTop: 6,
-    alignItems: 'center'
-  },
-  treeCanvasScrollContent: {
-    paddingRight: 6,
-    paddingBottom: 140
+    padding: 16
   },
   treeCanvas: {
-    paddingVertical: 6,
-    gap: 10
-  },
-  treeExpandButton: {
-    alignSelf: 'center',
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: '#D4E3DB',
-    backgroundColor: '#FFFFFF',
-    paddingHorizontal: 12,
-    paddingVertical: 8
-  },
-  treeExpandButtonText: {
-    color: '#1F5F46',
-    fontSize: 12,
-    fontWeight: '800',
-    textAlign: 'center'
+    minWidth: 900,
+    alignItems: 'center',
+    gap: 40,
+    paddingVertical: 20
   },
   treeLevel: {
-    width: 300,
-    alignItems: 'center',
-    gap: 8
-  },
-  treeParentTopRow: {
-    width: '100%',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    gap: 18
-  },
-  treeParentColumn: {
-    flex: 1,
-    alignItems: 'center',
-    gap: 8
-  },
-  treeParentSecondaryRow: {
-    width: '100%',
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'center',
-    gap: 10
+    alignItems: 'center'
   },
   treeLevelLabel: {
-    marginBottom: 6,
-    color: '#3C6454',
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '800',
-    letterSpacing: 0.5,
-    textTransform: 'uppercase'
+    marginBottom: 10,
+    color: '#355E52'
   },
   treeRowWrap: {
-    width: '100%',
     flexDirection: 'row',
     flexWrap: 'wrap',
+    gap: 20,
     justifyContent: 'center',
-    gap: 8
+    paddingHorizontal: 20
   },
-  treeNodeCard: {
-    width: 128,
-    minHeight: 54,
-    borderRadius: 10,
-    borderWidth: 1.5,
-    backgroundColor: '#FFFFFF',
-    paddingHorizontal: 8,
-    paddingVertical: 7,
+  treeCoupleWrap: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 7,
-    position: 'relative',
-    overflow: 'visible'
+    justifyContent: 'center',
+    gap: 16,
+    minHeight: 150
   },
-  treeNodeCardSelected: {
-    borderColor: '#2AA16E',
-    borderWidth: 2,
-    shadowColor: '#0A7A4A',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 3,
-    elevation: 2
+  treeTopParentGrid: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'flex-end',
+    gap: 58,
+    marginBottom: -4,
+    minHeight: 146
   },
-  treeNodeAvatar: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: '#ECF2EF',
-    borderWidth: 1,
-    borderColor: '#D4E0D9',
-    alignItems: 'center',
+  treeTopParentColumn: {
+    width: 170,
+    alignItems: 'center'
+  },
+  treeTopParentRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
     justifyContent: 'center'
   },
-  treeNodeAvatarText: {
-    color: '#3C5A4E',
+  treeTopJoinWrap: {
+    alignItems: 'center',
+    marginTop: 2
+  },
+  treeTopJoinHorizontal: {
+    width: 126,
+    height: 2,
+    backgroundColor: '#BFCBD5',
+    borderRadius: 999
+  },
+  treeTopConnectorLine: {
+    marginTop: 0,
+    width: 2,
+    height: 50,
+    backgroundColor: '#BFCBD5'
+  },
+  treeCoupleLine: {
+    width: 42,
+    height: 2,
+    backgroundColor: '#BFCBD5',
+    marginTop: 26
+  },
+  treeNodeWrap: {
+    alignItems: 'center',
+    gap: 8,
+    paddingTop: 2
+  },
+  treeParentActionRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 2
+  },
+  treeParentActionButton: {
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#D4E1DB',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 10,
+    paddingVertical: 5
+  },
+  treeParentActionText: {
+    color: '#355E52',
     fontSize: 10,
     fontWeight: '800'
   },
+  treeNodeCard: {
+    width: 150,
+    minHeight: 70,
+    borderRadius: 12,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#D6E3DC',
+    padding: 10,
+    alignItems: 'center'
+  },
+  treeNodeAvatar: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: '#E7F1EC',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 6
+  },
+  treeNodeAvatarText: {
+    fontWeight: '800',
+    color: '#2C5244'
+  },
   treeNodeName: {
-    flex: 1,
-    color: '#1E2B26',
-    fontSize: 11,
-    lineHeight: 14,
+    fontSize: 12,
     fontWeight: '700',
-    textTransform: 'uppercase'
+    textAlign: 'center'
+  },
+  treeNodeMeta: {
+    marginTop: 2,
+    color: '#5E766D',
+    fontSize: 10,
+    fontWeight: '700',
+    textAlign: 'center'
   },
   treeNodeAddButton: {
     position: 'absolute',
-    left: '50%',
     bottom: -10,
-    marginLeft: -9,
-    width: 18,
-    height: 18,
-    borderRadius: 9,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
     borderColor: '#D4E1DB',
@@ -3271,275 +2966,14 @@ const styles = StyleSheet.create({
     justifyContent: 'center'
   },
   treeNodeAddButtonText: {
-    color: '#1F5F46',
-    fontSize: 13,
-    fontWeight: '900',
-    marginTop: -1
-  },
-  treeQuickAddTitle: {
-    color: '#174536',
-    fontSize: 13,
     fontWeight: '900'
   },
-  treeQuickAddSubtitle: {
-    marginTop: 4,
-    marginBottom: 10,
-    color: '#4B6B5D',
-    fontSize: 12,
-    fontWeight: '700'
-  },
-  treeQuickAddGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8
-  },
-  treeQuickAddButton: {
-    width: '48.5%',
-    borderRadius: 10,
-    backgroundColor: '#1F6A4D',
-    paddingVertical: 9,
-    paddingHorizontal: 8,
+  treeConnectorWrap: {
     alignItems: 'center'
   },
-  treeQuickAddButtonText: {
-    color: '#FFFFFF',
-    fontSize: 12,
-    fontWeight: '800',
-    textAlign: 'center'
-  },
-  treeQuickAddSheetOverlay: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    top: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(0, 0, 0, 0.25)',
-    justifyContent: 'flex-end'
-  },
-  treeQuickAddSheet: {
-    backgroundColor: '#FFFFFF',
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
-    paddingHorizontal: 12,
-    paddingTop: 12,
-    paddingBottom: 16,
-    borderWidth: 1,
-    borderColor: '#D4E3DC'
-  },
-  treeQuickAddSheetHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 10
-  },
-  treeQuickAddClose: {
-    borderRadius: 10,
-    backgroundColor: '#EEF5F1',
-    borderWidth: 1,
-    borderColor: '#D4E3DC',
-    paddingVertical: 6,
-    paddingHorizontal: 10
-  },
-  treeQuickAddCloseText: {
-    color: '#1F5F46',
-    fontSize: 12,
-    fontWeight: '800'
-  },
-  treeConnectorWrap: {
-    alignItems: 'center',
-    paddingVertical: 4
-  },
   treeConnectorLine: {
-    width: 1.5,
-    height: 14,
+    width: 2,
+    height: 40,
     backgroundColor: '#BFCBD5'
-  },
-  treeConnectorDot: {
-    marginTop: 2,
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#BFCBD5'
-  },
-  treeSideSection: {
-    marginTop: 10,
-    width: '100%',
-    paddingTop: 8,
-    borderTopWidth: 1,
-    borderTopColor: '#D6E3DC'
-  },
-  treeSideLabel: {
-    marginBottom: 6,
-    color: '#3C6454',
-    fontSize: 11,
-    fontWeight: '800',
-    textAlign: 'center',
-    textTransform: 'uppercase'
-  },
-  treeEmptyState: {
-    marginTop: 10,
-    borderRadius: 10,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#D7E5DE',
-    padding: 10,
-    width: '100%'
-  },
-  treeEmptyTitle: {
-    color: '#275544',
-    fontSize: 13,
-    fontWeight: '800'
-  },
-  treeEmptyBody: {
-    marginTop: 3,
-    color: '#5E766D',
-    fontSize: 12,
-    lineHeight: 16,
-    fontWeight: '600'
-  },
-  treeMemberInfoCard: {
-    marginTop: 10,
-    width: '100%',
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#CFE0D8',
-    backgroundColor: '#FFFFFF',
-    padding: 10
-  },
-  treeMemberInfoName: {
-    color: '#153D2F',
-    fontSize: 14,
-    fontWeight: '800'
-  },
-  treeMemberInfoSection: {
-    marginTop: 12,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: '#ECF3EF',
-    gap: 8
-  },
-  treeMemberInfoSectionTitle: {
-    color: '#1B4A3A',
-    fontSize: 12,
-    fontWeight: '800'
-  },
-  treeMemberInfoActionButton: {
-    alignSelf: 'flex-start',
-    borderRadius: 999,
-    backgroundColor: '#1F6B52',
-    paddingHorizontal: 12,
-    paddingVertical: 8
-  },
-  treeMemberInfoActionButtonText: {
-    color: '#FFFFFF',
-    fontSize: 11,
-    fontWeight: '800'
-  },
-  treeMemberInfoErrorText: {
-    color: '#A43D32',
-    fontSize: 11,
-    fontWeight: '700'
-  },
-  treeMemberInfoList: {
-    gap: 8
-  },
-  treeMemberInfoListItem: {
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#D7E5DE',
-    backgroundColor: '#F7FBF8',
-    paddingHorizontal: 10,
-    paddingVertical: 9
-  },
-  treeMemberInfoListItemStatic: {
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#D7E5DE',
-    backgroundColor: '#F7FBF8',
-    paddingHorizontal: 10,
-    paddingVertical: 9
-  },
-  treeMemberInfoListItemTitle: {
-    color: '#163C30',
-    fontSize: 12,
-    fontWeight: '700'
-  },
-  treeMemberInfoListItemMeta: {
-    marginTop: 2,
-    color: '#5E766D',
-    fontSize: 10,
-    fontWeight: '700',
-    textTransform: 'uppercase'
-  },
-  treeMemberInfoInput: {
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#D3E2DB',
-    backgroundColor: '#FFFFFF',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    color: '#173D30',
-    fontSize: 12
-  },
-  treeMemberInfoTypeRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8
-  },
-  treeMemberInfoTypePill: {
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: '#C9D9D1',
-    backgroundColor: '#F3F8F5',
-    paddingHorizontal: 10,
-    paddingVertical: 6
-  },
-  treeMemberInfoTypePillActive: {
-    borderColor: '#1F6B52',
-    backgroundColor: '#DFF1E8'
-  },
-  treeMemberInfoTypePillText: {
-    color: '#527166',
-    fontSize: 10,
-    fontWeight: '800'
-  },
-  treeMemberInfoTypePillTextActive: {
-    color: '#184635'
-  },
-  treeMemberInfoSmallText: {
-    color: '#5E766D',
-    fontSize: 11,
-    lineHeight: 16,
-    fontWeight: '600'
-  },
-  treeMemberInfoMeta: {
-    marginTop: 2,
-    marginBottom: 8,
-    color: '#4D6C60',
-    fontSize: 11,
-    fontWeight: '700',
-    textTransform: 'uppercase'
-  },
-  treeMemberInfoRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 3,
-    borderTopWidth: 1,
-    borderTopColor: '#ECF3EF'
-  },
-  treeMemberInfoLabel: {
-    color: '#4F6E62',
-    fontSize: 11,
-    fontWeight: '700'
-  },
-  treeMemberInfoValue: {
-    color: '#173D30',
-    fontSize: 11,
-    fontWeight: '700',
-    maxWidth: '64%',
-    textAlign: 'right'
   }
 });

@@ -48,6 +48,7 @@ type FamilyMemberSummary = {
   fullName: string;
   phoneNumber: string | null;
   birthYear: number | null;
+  deathDate?: string | null;
   location: string | null;
   gender: string | null;
   photoUrl: string | null;
@@ -63,6 +64,7 @@ const toFamilyMemberSummary = (row: {
   full_name: string;
   phone_number: string | null;
   birth_year: number | null;
+  death_date?: string | Date | null;
   location: string | null;
   gender: string | null;
   photo_url: string | null;
@@ -76,6 +78,7 @@ const toFamilyMemberSummary = (row: {
   fullName: row.full_name,
   phoneNumber: row.phone_number,
   birthYear: row.birth_year,
+  deathDate: row.death_date ? new Date(row.death_date).toISOString() : null,
   location: row.location,
   gender: row.gender,
   photoUrl: row.photo_url,
@@ -118,7 +121,7 @@ const getRelatedMembers = async (userId: number, relationshipType: FamilyRelatio
   const query =
     direction === 'outgoing'
       ? `
-          SELECT u.id, u.full_name, u.phone_number, u.birth_year, u.location, u.gender, u.photo_url, u.notes,
+          SELECT u.id, u.full_name, u.phone_number, u.birth_year, u.death_date, u.location, u.gender, u.photo_url, u.notes,
                  u.clan_name, u.totem, u.tribe, u.origin_country
           FROM app_family_relationships fr
           JOIN app_users u ON u.id = fr.target_user_id
@@ -126,7 +129,7 @@ const getRelatedMembers = async (userId: number, relationshipType: FamilyRelatio
           ORDER BY u.full_name ASC
         `
       : `
-          SELECT u.id, u.full_name, u.phone_number, u.birth_year, u.location, u.gender, u.photo_url, u.notes,
+          SELECT u.id, u.full_name, u.phone_number, u.birth_year, u.death_date, u.location, u.gender, u.photo_url, u.notes,
                  u.clan_name, u.totem, u.tribe, u.origin_country
           FROM app_family_relationships fr
           JOIN app_users u ON u.id = fr.source_user_id
@@ -139,16 +142,21 @@ const getRelatedMembers = async (userId: number, relationshipType: FamilyRelatio
 };
 
 const buildFamilySnapshot = async (userId: number) => {
-  const [parents, spouseList, children, siblings] = await Promise.all([
+  const [ownParents, spouseList, children, siblings] = await Promise.all([
     getRelatedMembers(userId, 'parent', 'incoming'),
     getRelatedMembers(userId, 'spouse', 'outgoing'),
     getRelatedMembers(userId, 'parent', 'outgoing'),
     getRelatedMembers(userId, 'sibling', 'outgoing')
   ]);
 
+  const spouse = spouseList[0] || null;
+  const spouseParents = spouse ? await getRelatedMembers(spouse.id, 'parent', 'incoming') : [];
+
   return {
-    parents,
-    spouse: spouseList[0] || null,
+    parents: ownParents,
+    ownParents,
+    spouseParents,
+    spouse,
     children,
     siblings
   };
@@ -221,6 +229,7 @@ const initializeDatabase = async (): Promise<void> => {
   await pool.query('ALTER TABLE app_users ADD COLUMN IF NOT EXISTS gender VARCHAR(30)');
   await pool.query('ALTER TABLE app_users ADD COLUMN IF NOT EXISTS photo_url TEXT');
   await pool.query('ALTER TABLE app_users ADD COLUMN IF NOT EXISTS notes TEXT');
+  await pool.query('ALTER TABLE app_users ADD COLUMN IF NOT EXISTS death_date TIMESTAMPTZ');
   await pool.query('ALTER TABLE app_users ADD COLUMN IF NOT EXISTS created_by INT');
   await pool.query('ALTER TABLE app_users ADD COLUMN IF NOT EXISTS clan_name VARCHAR(140)');
   await pool.query('ALTER TABLE app_users ADD COLUMN IF NOT EXISTS totem VARCHAR(140)');
@@ -736,11 +745,34 @@ app.post('/api/mobile/family/link', authenticate, async (req: AuthRequest, res: 
 
   const targetUserIdInput = req.body.targetUserId;
   let targetUserId = typeof targetUserIdInput === 'number' ? targetUserIdInput : Number(targetUserIdInput);
+  const sourceUserIdInput = req.body.sourceUserId;
+  const requestedSourceUserId = typeof sourceUserIdInput === 'number' ? sourceUserIdInput : Number(sourceUserIdInput);
 
   const memberPayload = typeof req.body.member === 'object' && req.body.member ? (req.body.member as Record<string, unknown>) : null;
   const forceCreate = Boolean(req.body.forceCreate);
 
   try {
+    let sourceUserId = userId;
+
+    if (Number.isFinite(requestedSourceUserId) && requestedSourceUserId > 0 && requestedSourceUserId !== userId) {
+      const allowedSource = await pool.query(
+        `
+          SELECT target_user_id
+          FROM app_family_relationships
+          WHERE source_user_id = $1 AND target_user_id = $2 AND relationship_type = 'spouse'
+          LIMIT 1
+        `,
+        [userId, requestedSourceUserId]
+      );
+
+      if (!allowedSource.rowCount) {
+        res.status(403).json({ success: false, message: 'You can only add relatives for yourself or your spouse.' });
+        return;
+      }
+
+      sourceUserId = requestedSourceUserId;
+    }
+
     if (!Number.isFinite(targetUserId) || targetUserId <= 0) {
       if (!memberPayload) {
         res.status(400).json({ success: false, message: 'Provide targetUserId or member payload.' });
@@ -765,7 +797,7 @@ app.post('/api/mobile/family/link', authenticate, async (req: AuthRequest, res: 
         return;
       }
 
-      const duplicateParams: Array<string | number> = [userId];
+      const duplicateParams: Array<string | number> = [sourceUserId];
       const duplicateConditions: string[] = [];
       duplicateParams.push(fullName);
       duplicateConditions.push(`LOWER(full_name) = LOWER($${duplicateParams.length})`);
@@ -831,13 +863,13 @@ app.post('/api/mobile/family/link', authenticate, async (req: AuthRequest, res: 
           photoUrl,
           notes,
           placeholderHash,
-          userId
+          sourceUserId
         ]
       );
       targetUserId = Number(created.rows[0]?.id);
     }
 
-    if (!Number.isFinite(targetUserId) || targetUserId <= 0 || targetUserId === userId) {
+    if (!Number.isFinite(targetUserId) || targetUserId <= 0 || targetUserId === sourceUserId) {
       res.status(400).json({ success: false, message: 'Invalid target member selection.' });
       return;
     }
@@ -849,22 +881,22 @@ app.post('/api/mobile/family/link', authenticate, async (req: AuthRequest, res: 
     }
 
     if (relationshipType === 'spouse') {
-      await ensureFamilyLink(userId, targetUserId, 'spouse');
-      await ensureFamilyLink(targetUserId, userId, 'spouse');
+      await ensureFamilyLink(sourceUserId, targetUserId, 'spouse');
+      await ensureFamilyLink(targetUserId, sourceUserId, 'spouse');
     }
 
     if (relationshipType === 'parent') {
-      await ensureFamilyLink(targetUserId, userId, 'parent');
-      await ensureFamilyLink(userId, targetUserId, 'child');
+      await ensureFamilyLink(targetUserId, sourceUserId, 'parent');
+      await ensureFamilyLink(sourceUserId, targetUserId, 'child');
     }
 
     if (relationshipType === 'child') {
-      await ensureFamilyLink(userId, targetUserId, 'parent');
-      await ensureFamilyLink(targetUserId, userId, 'child');
+      await ensureFamilyLink(sourceUserId, targetUserId, 'parent');
+      await ensureFamilyLink(targetUserId, sourceUserId, 'child');
 
       const spouseRows = await pool.query(
         'SELECT target_user_id FROM app_family_relationships WHERE source_user_id = $1 AND relationship_type = $2 LIMIT 1',
-        [userId, 'spouse']
+        [sourceUserId, 'spouse']
       );
       const spouseId = Number(spouseRows.rows[0]?.target_user_id || 0);
       if (spouseId) {
@@ -874,12 +906,12 @@ app.post('/api/mobile/family/link', authenticate, async (req: AuthRequest, res: 
     }
 
     if (relationshipType === 'sibling') {
-      await ensureFamilyLink(userId, targetUserId, 'sibling');
-      await ensureFamilyLink(targetUserId, userId, 'sibling');
+      await ensureFamilyLink(sourceUserId, targetUserId, 'sibling');
+      await ensureFamilyLink(targetUserId, sourceUserId, 'sibling');
 
       const sourceParents = await pool.query(
         'SELECT source_user_id FROM app_family_relationships WHERE target_user_id = $1 AND relationship_type = $2',
-        [userId, 'parent']
+        [sourceUserId, 'parent']
       );
       const targetParents = await pool.query(
         'SELECT source_user_id FROM app_family_relationships WHERE target_user_id = $1 AND relationship_type = $2',
@@ -898,8 +930,8 @@ app.post('/api/mobile/family/link', authenticate, async (req: AuthRequest, res: 
 
       if (targetParentIds.length) {
         for (const parentId of targetParentIds) {
-          await ensureFamilyLink(parentId, userId, 'parent');
-          await ensureFamilyLink(userId, parentId, 'child');
+          await ensureFamilyLink(parentId, sourceUserId, 'parent');
+          await ensureFamilyLink(sourceUserId, parentId, 'child');
         }
       }
     }

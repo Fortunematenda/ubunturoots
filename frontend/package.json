@@ -13,6 +13,7 @@
     "prisma:seed": "tsx prisma/seed.ts"
   },
   "dependencies": {
+    "@balkangraph/familytree.js": "^1.9.47",
     "@prisma/client": "^5.20.0",
     "bcryptjs": "^2.4.3",
     "classnames": "^2.5.1",

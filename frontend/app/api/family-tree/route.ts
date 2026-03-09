@@ -40,6 +40,7 @@ export async function GET(request: NextRequest) {
         motherId: true,
         spouseId: true,
         birthYear: true,
+        deathDate: true,
         status: true
       }
     });
@@ -70,6 +71,7 @@ export async function GET(request: NextRequest) {
       tribe: true,
       originCountry: true,
       birthYear: true,
+      deathDate: true,
       status: true
     }
   });
