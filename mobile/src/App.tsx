@@ -233,6 +233,17 @@ function MobileFamilyTree({
   };
 
   const isEmpty = !parents.length && !children.length && !siblings.length && !spouse;
+  const fatherParents = parents.filter((member) => (member.gender || '').toUpperCase() === 'MALE');
+  const motherParents = parents.filter((member) => (member.gender || '').toUpperCase() === 'FEMALE');
+  const otherParents = parents.filter((member) => {
+    const normalizedGender = (member.gender || '').toUpperCase();
+    return normalizedGender !== 'MALE' && normalizedGender !== 'FEMALE';
+  });
+  const quickAddOptions = quickAddTarget
+    ? quickAddTarget.id === primaryMember.id
+      ? FAMILY_RELATION_OPTIONS
+      : FAMILY_RELATION_OPTIONS.filter((option) => option.value !== 'parent')
+    : FAMILY_RELATION_OPTIONS;
 
   if (isLoading) {
     return (
@@ -288,13 +299,59 @@ function MobileFamilyTree({
       >
         <View style={styles.treeCanvas}>
           {parents.length ? (
-            <TreeLevel
-              label="Parents"
-              members={parents.map((member) => ({ ...member, relationLabel: 'Parent' }))}
-              selectedMemberId={selectedMember?.id ?? null}
-              onSelectMember={setSelectedMember}
-              onAddMember={setQuickAddTarget}
-            />
+            <View style={styles.treeLevel}>
+              <Text style={styles.treeLevelLabel}>Parents</Text>
+              <View style={styles.treeParentTopRow}>
+                <View style={styles.treeParentColumn}>
+                  {fatherParents.length
+                    ? fatherParents.map((member) => {
+                        const parentMember = { ...member, relationLabel: 'Father' };
+                        return (
+                          <TreePersonCard
+                            key={`father-${member.id}`}
+                            member={parentMember}
+                            isSelected={selectedMember?.id === parentMember.id}
+                            onPress={() => setSelectedMember(parentMember)}
+                            onAddPress={() => setQuickAddTarget(parentMember)}
+                          />
+                        );
+                      })
+                    : null}
+                </View>
+                <View style={styles.treeParentColumn}>
+                  {motherParents.length
+                    ? motherParents.map((member) => {
+                        const parentMember = { ...member, relationLabel: 'Mother' };
+                        return (
+                          <TreePersonCard
+                            key={`mother-${member.id}`}
+                            member={parentMember}
+                            isSelected={selectedMember?.id === parentMember.id}
+                            onPress={() => setSelectedMember(parentMember)}
+                            onAddPress={() => setQuickAddTarget(parentMember)}
+                          />
+                        );
+                      })
+                    : null}
+                </View>
+              </View>
+              {otherParents.length ? (
+                <View style={styles.treeParentSecondaryRow}>
+                  {otherParents.map((member) => {
+                    const parentMember = { ...member, relationLabel: 'Parent' };
+                    return (
+                      <TreePersonCard
+                        key={`parent-${member.id}`}
+                        member={parentMember}
+                        isSelected={selectedMember?.id === parentMember.id}
+                        onPress={() => setSelectedMember(parentMember)}
+                        onAddPress={() => setQuickAddTarget(parentMember)}
+                      />
+                    );
+                  })}
+                </View>
+              ) : null}
+            </View>
           ) : null}
 
           {allParents.length > 4 ? (
@@ -591,7 +648,7 @@ function MobileFamilyTree({
             </Text>
 
             <View style={styles.treeQuickAddGrid}>
-              {FAMILY_RELATION_OPTIONS.map((option) => (
+              {quickAddOptions.map((option) => (
                 <Pressable
                   key={`quick-add-${quickAddTarget.id}-${option.value}`}
                   style={styles.treeQuickAddButton}
@@ -3118,6 +3175,25 @@ const styles = StyleSheet.create({
     width: 300,
     alignItems: 'center',
     gap: 8
+  },
+  treeParentTopRow: {
+    width: '100%',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: 18
+  },
+  treeParentColumn: {
+    flex: 1,
+    alignItems: 'center',
+    gap: 8
+  },
+  treeParentSecondaryRow: {
+    width: '100%',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: 10
   },
   treeLevelLabel: {
     marginBottom: 6,
